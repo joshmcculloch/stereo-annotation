@@ -1,0 +1,50 @@
+<html>
+	<head>
+		<link rel="stylesheet" type="text/css" href="annotate.css">
+		<script src="annotate.js"></script>
+	</head>
+	 
+<body>
+	<div class="container">
+		<div class="top_pane"></div>
+		<div class="left_pane">
+			<canvas id="left_canvas"></canvas>
+		</div>
+		<div class="center_pane">
+			<canvas id="right_canvas"></canvas>
+		</div>
+		<div class="right_pane">
+			<span id="cursor_state">Cursor State: unkown</span>
+		</div>
+	</div>
+	<script>
+		var cursor = new Cursor();
+		
+		var left = new ImageViewer("left_canvas",
+			(x,y) => cursor.do_left_primary(x,y),
+			(x,y) => cursor.do_left_secondary(x,y),
+			(d) => cursor.do_left_wheel(d),
+			(x,y) => cursor.do_left_update(x,y),
+			(ctx) => cursor.do_left_draw(ctx));
+		left.draw();
+		left.set_image("test_images/left.png");
+		
+		var right = new ImageViewer("right_canvas",
+			(x,y) => cursor.do_right_primary(x,y),
+			(x,y) => cursor.do_right_secondary(x,y),
+			(d) => cursor.do_right_wheel(d),
+			(x,y) => cursor.do_right_update(x,y),
+			(ctx) => cursor.do_right_draw(ctx));
+		right.draw();
+		right.set_image("test_images/right.png");
+		
+		right.otherImageViewer = left;
+		left.otherImageViewer = right;
+		
+		window.onresize = function(){
+			left.draw();
+			right.draw();
+		}
+	</script>
+</body>
+</html>
