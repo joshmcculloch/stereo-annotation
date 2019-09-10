@@ -1,6 +1,7 @@
 <html>
 	<head>
 		<link rel="stylesheet" type="text/css" href="annotate.css">
+		<script src="utils.js"></script>
 		<script src="annotate.js"></script>
 	</head>
 	 
@@ -8,13 +9,15 @@
 	<div class="container">
 		<div class="top_pane"></div>
 		<div class="left_pane">
-			<canvas id="left_canvas"></canvas>
+			<canvas id="left_canvas" tabindex='1'></canvas>
 		</div>
 		<div class="center_pane">
-			<canvas id="right_canvas"></canvas>
+			<canvas id="right_canvas" tabindex='1'></canvas>
 		</div>
 		<div class="right_pane">
 			<span id="cursor_state">Cursor State: unkown</span>
+			<h4>Actions</h4>
+			<ul id=actions></ul>
 		</div>
 	</div>
 	<script>
@@ -25,7 +28,8 @@
 			(x,y) => cursor.do_left_secondary(x,y),
 			(d) => cursor.do_left_wheel(d),
 			(x,y) => cursor.do_left_update(x,y),
-			(ctx) => cursor.do_left_draw(ctx));
+			(ctx) => cursor.do_left_draw(ctx),
+			(key) => cursor.do_left_keydown(key));
 		left.draw();
 		left.set_image("test_images/left.png");
 		
@@ -34,7 +38,8 @@
 			(x,y) => cursor.do_right_secondary(x,y),
 			(d) => cursor.do_right_wheel(d),
 			(x,y) => cursor.do_right_update(x,y),
-			(ctx) => cursor.do_right_draw(ctx));
+			(ctx) => cursor.do_right_draw(ctx),
+			(key) => cursor.do_right_keydown(key));
 		right.draw();
 		right.set_image("test_images/right.png");
 		

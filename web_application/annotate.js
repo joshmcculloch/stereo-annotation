@@ -2,7 +2,7 @@ var MouseState = Object.freeze({"up":1, "down":2, "dragging":3});
 
 class ImageViewer {
 	
-	constructor (canvas_id, primary, secondary, wheel, update, draw) {
+	constructor (canvas_id, primary, secondary, wheel, update, draw, keydown) {
 		this.view_x = 0;
 		this.view_y = 0;
 		this.view_zoom = 0.1;
@@ -23,6 +23,7 @@ class ImageViewer {
 		this.cursor_wheel = wheel;
 		this.cursor_update = update;
 		this.cursor_draw = draw;
+		this.cursor_keydown = keydown;
 	}
 	
 	setup_canvas () {
@@ -36,6 +37,7 @@ class ImageViewer {
 		this.canvas.onwheel = function(event){self.wheel_handler(event);};
 		this.canvas.onmousemove = function(event){self.mouse_move(event);};
 		this.canvas.onmouseout = function(event){self.mouse_out_handler(event);};
+		this.canvas.onkeydown = function (event) {self.keydown_handler(event);};
 		this.canvas.oncontextmenu = function (event) {event.preventDefault();};
 	}
 	
@@ -115,6 +117,10 @@ class ImageViewer {
 		}
 		this.update_other_view();
 		this.draw();
+	}
+	
+	keydown_handler (event) {
+		this.cursor_keydown(event.key);
 	}
 	
 	set_pos_zoom(x, y, z) {
@@ -213,9 +219,10 @@ class ImageViewer {
 
 var CursorState = Object.freeze({
 	"ready":1, 
-	"placing":2, 
-	"edit_left":3,
-	"edit_right":4});
+	"selected":2,
+	"placing":3, 
+	"edit":4,
+	"disparity":5});
 
 class Cursor {
 	constructor () {
@@ -227,6 +234,10 @@ class Cursor {
 		this.features = [];
 		this.debug = true;
 		this.update_debug();
+		this.feature_counter = 0;
+		this.mouse_over_left = false;
+		this.mouse_over_right = false;
+		this.average_disparity = 0;
 		
 	}
 	update_debug () {
@@ -237,20 +248,26 @@ class Cursor {
 				case CursorState.ready:
 				debug_span.innerHTML += "ready";
 				break;
+				case CursorState.selected:
+				debug_span.innerHTML += "selected";
+				break;
 				case CursorState.placing:
 				debug_span.innerHTML += "placing";
 				break;
-				case CursorState.edit_left:
-				debug_span.innerHTML += "edit_left";
+				case CursorState.edit:
+				debug_span.innerHTML += "edit";
 				break;
-				case CursorState.edit_right:
-				debug_span.innerHTML += "edit_right";
+				case CursorState.disparity:
+				debug_span.innerHTML += "disparity";
 				break;
+				
 			} 
 			debug_span.innerHTML += "<br/>prvious_feature: ";
 			debug_span.innerHTML += this.selected !== undefined;
 			debug_span.innerHTML += "<br/>Features: ";
 			debug_span.innerHTML += this.features.length;
+			debug_span.innerHTML += "<br/>Average Disparity: ";
+			debug_span.innerHTML += this.average_disparity;
 		}
 	}
 	
@@ -258,18 +275,36 @@ class Cursor {
 		var over_feature = this.select(x,y);
 		switch (this.state) {
 			case CursorState.ready:
-			if (over_feature !== undefined) {
-				this.selected = over_feature;
-				this.state = CursorState.placing;
-			} else {
-				this.state = CursorState.placing;
-			}
-			break;
+				if (over_feature !== undefined) {
+					this.state_selected(over_feature);
+				} else {
+					this.state_placing();
+				}
+				break;
+			
+			case CursorState.selected:
+				if (over_feature !== undefined) {
+					this.action_set_parent(this.selected, over_feature);
+					this.state_ready();
+				} else {
+					this.state_placing();
+				}
+				break;
+			
 			case CursorState.placing:
-			var f = new Feature(this.x, this.y, 0, this.diameter,this.selected);
-			this.selected = f;
-			this.features.push(f);
-			break;
+				this.action_place(this.x, this.y, 0, this.diameter);
+				break;
+				
+			case CursorState.edit:
+				console.log("Save new position");
+				this.action_move(this.selected, this.x, this.y, this.diameter)
+				this.state_ready();
+				break;
+				
+			case CursorState.disparity:
+				console.log("Save new disparity");
+				this.state_ready();
+				break;
 		}
 		this.update_debug();
 	}
@@ -278,10 +313,21 @@ class Cursor {
 		switch (this.state) {
 			case CursorState.ready:
 			break;
+			case CursorState.selected:
+				this.state_ready()
+				break;
 			case CursorState.placing:
-			this.state = CursorState.ready;
-			this.selected = undefined;
-			break;
+				this.state_ready();
+				break;
+			case CursorState.edit:
+				console.log("Disregard new position");
+				this.state_ready();
+				break;
+				
+			case CursorState.disparity:
+				console.log("Disregard new disparity");
+				this.state_ready();
+				break;
 		}
 		this.update_debug();
 	}
@@ -293,6 +339,8 @@ class Cursor {
 	do_left_update(x,y) {
 		this.x = x;
 		this.y = y;
+		this.mouse_over_left = true;
+		this.mouse_over_right = false;
 	}
 	
 	do_left_draw(context) {
@@ -315,13 +363,84 @@ class Cursor {
 			} 
 		}
 		
+		if (this.state == CursorState.edit && this.mouse_over_left) {
+			context.beginPath();
+			context.arc(this.x,this.y,this.diameter,0,2*Math.PI);
+			context.fillStyle = "rgba(200,255,200,0.3)";
+			context.fill();
+			context.stroke();
+		}
+		
+		if (this.state == CursorState.disparity && this.mouse_over_left) {
+			context.beginPath();
+			context.arc(this.selected.x,this.y,this.selected.diameter,0,2*Math.PI);
+			context.fillStyle = "rgba(200,255,200,0.3)";
+			context.fill();
+			context.stroke();
+			
+			context.lineWidth = 5;
+			context.strokeStyle = "yellow";
+			context.setLineDash([5,5]);
+			context.beginPath();
+			context.moveTo(this.selected.x, 0);
+			context.lineTo(this.selected.x, 10000);
+			console.log(context.canvas.height);
+			context.stroke();
+			context.setLineDash([]);
+		}
+		
 		context.lineWidth = 1;
 		context.strokeStyle = "black";
 		this.features.forEach ((f) => f.draw(context,f == this.selected));
 	}
 	
+	do_left_keydown(key) {
+		if (this.state == CursorState.selected && key.toLowerCase() == "d") {
+			this.state_disparity();
+		}
+		if (this.state == CursorState.selected && key.toLowerCase() == "e") {
+			this.state_edit();
+		}
+		this.update_debug();
+	}
+	
 	do_right_primary(x,y) {
-		this.do_left_primary(x,y);
+		var over_feature = this.select_disparity(x,y);
+		switch (this.state) {
+			case CursorState.ready:
+				if (over_feature !== undefined) {
+					this.state_selected(over_feature);
+				} else {
+					this.state_placing();
+				}
+				break;
+			
+			case CursorState.selected:
+				if (over_feature !== undefined) {
+					this.action_set_parent(this.selected, over_feature);
+					this.state_ready();
+				} else {
+					this.state_placing();
+				}
+				break;
+			
+			case CursorState.placing:
+				this.action_place(this.x, this.y, 0, this.diameter);
+				break;
+				
+			case CursorState.edit:
+				console.log("Save new position");
+				this.action_move(this.selected, this.x, this.y-this.selected.disparity, this.diameter)
+				this.state_ready();
+				break;
+				
+			case CursorState.disparity:
+				console.log("Save new disparity");
+				this.action_disparity(this.selected, this.y - this.selected.y)
+				this.state_ready();
+				break;
+		}
+		this.update_debug();
 	}
 	
 	do_right_secondary(x,y) {
@@ -335,6 +454,8 @@ class Cursor {
 	do_right_update(x,y) {
 		this.x = x;
 		this.y = y;
+		this.mouse_over_left = false;
+		this.mouse_over_right = true;
 	}
 	
 	do_right_draw(context) {
@@ -355,7 +476,116 @@ class Cursor {
 				context.stroke();
 			}
 		}
+		
+		if (this.state == CursorState.edit && this.mouse_over_right) {
+			context.beginPath();
+			context.arc(this.x,this.y,this.diameter,0,2*Math.PI);
+			context.fillStyle = "rgba(200,255,200,0.3)";
+			context.fill();
+			context.stroke();
+		}
+		
+		if (this.state == CursorState.disparity && this.mouse_over_right) {
+			context.beginPath();
+			context.arc(this.selected.x,this.y,this.selected.diameter,0,2*Math.PI);
+			context.fillStyle = "rgba(200,255,200,0.3)";
+			context.fill();
+			context.stroke();
+			
+			context.lineWidth = 5;
+			context.strokeStyle = "yellow";
+			context.setLineDash([5,5]);
+			context.beginPath();
+			context.moveTo(this.selected.x, 0);
+			context.lineTo(this.selected.x, 10000);
+			console.log(context.canvas.height);
+			context.stroke();
+			context.setLineDash([]);
+		}
+		
 		this.features.forEach ((f) => f.draw_disparity(context,f == this.selected));
+	}
+	
+	do_right_keydown(key) {
+		this.do_left_keydown(key);
+	}
+	
+	state_ready () {
+		this.selected = undefined;
+		this.state = CursorState.ready;
+	}
+	
+	state_selected (feature) {
+		this.selected = feature;
+		this.state = CursorState.selected;
+	}
+	
+	state_placing () {
+		this.calc_average_disparity();
+		this.state = CursorState.placing;
+	}
+	
+	state_edit () {
+		this.state = CursorState.edit;
+	}
+	
+	state_disparity () {
+		this.state = CursorState.disparity;
+	}
+	
+	action_place (x, y, disparity, diameter) {
+		var parent = "none";
+		if (this.selected !== undefined) {
+			parent = this.selected.id;
+		}
+		this.add_to_action_list("Feature("+this.feature_counter +","+
+			this.x+","+
+			this.y+","+
+			this.average_disparity+","+
+			this.diameter+","+
+			parent+")");
+		
+			
+		var f = new Feature(this.feature_counter, this.x, this.y, this.average_disparity, this.diameter,this.selected);
+		this.selected = f;
+		this.features.push(f);
+		this.feature_counter += 1;
+		this.calc_average_disparity();
+	}
+	
+	action_move (node, x, y, diameter) {
+		this.add_to_action_list("Move("+node.id +","+
+			x+","+
+			y+","+
+			diameter+")");
+		node.x = x;
+		node.y = y;
+		node.diameter = diameter;
+	}
+	
+	action_disparity (node, disparity) {
+		this.add_to_action_list("Disparity("+node.id +","+disparity+")");
+		node.disparity = disparity;
+	}
+	
+	action_delete () {
+		
+	}
+	
+	action_set_parent (child,parent) {
+		this.add_to_action_list("set_parent("+child.id+","+parent.id+")");
+		child.previous = parent;
+	}
+	
+	action_unset_parent (child) {
+		
+	}
+	
+	add_to_action_list (text) {
+		var action_list = document.getElementById("actions");
+		var li = document.createElement('li');
+		li.appendChild(document.createTextNode(text));
+		action_list.appendChild(li);
 	}
 	
 	select(x,y) {
@@ -379,10 +609,21 @@ class Cursor {
 		});
 		return selected;
 	}
+	
+	calc_average_disparity () {
+		var average_disparity = 0;
+		this.features.forEach ((f) => average_disparity += f.disparity);
+		if (this.features.length > 0) { 
+			average_disparity /= this.features.length;
+		}
+		this.average_disparity = Math.floor(average_disparity);
+		this.update_debug();
+	}
 }
 
 class Feature {
-	constructor (x, y, disparity, diameter, previous) {
+	constructor (id, x, y, disparity, diameter, previous) {
+		this.id = id;
 		this.x = x;
 		this.y = y;
 		this.disparity = disparity;
@@ -392,11 +633,13 @@ class Feature {
 	
 	draw(context, selected) {
 		if (this.previous !== undefined) {
+			context.lineWidth = 8;
+			context.strokeStyle = "black";
 			context.beginPath()
-			context.moveTo(this.x,this.y);
-			context.lineTo(this.previous.x, this.previous.y);
-			context.lineWidth = 10;
-			context.strokeStyle = "blue";
+			canvas_arrow(context, this.x,this.y, this.previous.x, this.previous.y)
+			context.stroke();
+			context.lineWidth = 4;
+			context.strokeStyle = "white";
 			context.stroke();
 		} 
 		
@@ -415,12 +658,14 @@ class Feature {
 	
 	draw_disparity(context, selected) {
 		if (this.previous !== undefined) {
+			context.lineWidth = 8;
+			context.strokeStyle = "black";
 			context.beginPath()
-			context.moveTo(this.x,this.y);
-			context.lineTo(this.previous.x, this.previous.y);
-			context.lineWidth = 10;
-			context.strokeStyle = "blue";
+			canvas_arrow(context, this.x,this.y+this.disparity, this.previous.x, this.previous.y+this.previous.disparity)
 			context.stroke();
+			context.lineWidth = 4;
+			context.strokeStyle = "white";
+			context.stroke();;
 		} 
 		
 		context.lineWidth = 1;
