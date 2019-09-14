@@ -121,6 +121,8 @@ class ImageViewer {
 	
 	keydown_handler (event) {
 		this.cursor_keydown(event.key);
+		this.update_other_view();
+		this.draw();
 	}
 	
 	set_pos_zoom(x, y, z) {
@@ -218,6 +220,7 @@ class ImageViewer {
 
 
 var CursorState = Object.freeze({
+	"not_ready":0,
 	"ready":1, 
 	"selected":2,
 	"placing":3, 
@@ -229,7 +232,7 @@ class Cursor {
 		this.diameter = 30;
 		this.x = 0;
 		this.y = 0;
-		this.state = CursorState.ready;
+		this.state = CursorState.not_ready;
 		this.selected = undefined;
 		this.features = [];
 		this.debug = true;
@@ -238,6 +241,87 @@ class Cursor {
 		this.mouse_over_left = false;
 		this.mouse_over_right = false;
 		this.average_disparity = 0;
+		this.dataset = undefined;
+	}
+	
+	load_dataset (dataset) {
+		console.log("loading " + dataset.name)
+		this.state_not_ready();
+		document.getElementById("actions").innerHTML = "";
+		this.features = [];
+		this.dataset = dataset;
+		this.load_actions(this.dataset.actions)
+		this.update_debug;
+	}
+	
+	load_actions (path) {
+		console.log(path)
+		var request = new XMLHttpRequest();
+		request.open('GET', path, true);
+		var self = this;
+		request.onload = function() {
+			if (this.status >= 200 && this.status < 400) {
+				// Success!
+				var data = JSON.parse(this.response);
+				console.log("Loading actions");
+				data.forEach(function (action) {
+					console.log(action);
+					switch (action.action) {
+						
+						case "place":
+							self.action_place (Number(action.x), 
+								Number(action.y), 
+								Number(action.disparity), 
+								Number(action.diameter), 
+								Number(action.previous_id), 
+								false);
+							console.assert(self.features[self.features.length-1].id == Number(action.id), "new node id mismatch")
+							break;
+						
+						case "move":
+							self.action_move (self.get_feature_by_ID(Number(action.id)), 
+								Number(action.x),
+								Number(action.y),
+								Number(action.diameter),
+								false);
+							break;
+						
+						case "disparity":
+							self.action_disparity (self.get_feature_by_ID(Number(action.id)), 
+								Number(action.disparity),
+								false) 
+							break;
+						
+						case "set_previous":
+							self.action_set_previous (self.get_feature_by_ID(Number(action.id)),
+								self.get_feature_by_ID(Number(action.previous_id)),
+								false);
+							break;
+						
+						case "unset_previous":
+							self.action_unset_previous (self.get_feature_by_ID(Number(action.id)),
+								false);
+							break;
+						
+						case "delete":
+							self.action_delete(self.get_feature_by_ID(Number(action.id)), false)
+							break;
+					}
+				});
+				self.state_ready();
+			} else {
+				// We reached our target server, but it returned an error
+			}
+		};
+		request.onerror = function() {
+			// There was a connection error of some sort
+			var status = document.getElementById("status");
+			status.innerHTML = "Bad!";
+			status.className = "bad";
+			console.log("error: unable to load actions");
+		};
+		
+		request.send()
 		
 	}
 	update_debug () {
@@ -245,6 +329,9 @@ class Cursor {
 			var debug_span = document.getElementById("cursor_state");
 			debug_span.innerHTML = "Cursor state: ";
 			switch (this.state) {
+				case CursorState.not_ready:
+				debug_span.innerHTML += "not ready";
+				break;
 				case CursorState.ready:
 				debug_span.innerHTML += "ready";
 				break;
@@ -284,7 +371,7 @@ class Cursor {
 			
 			case CursorState.selected:
 				if (over_feature !== undefined) {
-					this.action_set_parent(this.selected, over_feature);
+					this.action_set_previous(this.selected, over_feature);
 					this.state_ready();
 				} else {
 					this.state_placing();
@@ -292,7 +379,11 @@ class Cursor {
 				break;
 			
 			case CursorState.placing:
-				this.action_place(this.x, this.y, 0, this.diameter);
+				var previous_id = -1;
+				if (this.selected !== undefined) {
+					previous_id = this.selected.id;
+				}
+				this.action_place(this.x, this.y, this.average_disparity, this.diameter, previous_id);
 				break;
 				
 			case CursorState.edit:
@@ -401,6 +492,10 @@ class Cursor {
 		if (this.state == CursorState.selected && key.toLowerCase() == "e") {
 			this.state_edit();
 		}
+		if(this.state == CursorState.selected && key.toLowerCase() == "delete") {
+			this.action_delete(this.selected);
+		}
+		console.log(key);
 		this.update_debug();
 	}
 	
@@ -417,7 +512,7 @@ class Cursor {
 			
 			case CursorState.selected:
 				if (over_feature !== undefined) {
-					this.action_set_parent(this.selected, over_feature);
+					this.action_set_previous(this.selected, over_feature);
 					this.state_ready();
 				} else {
 					this.state_placing();
@@ -510,6 +605,11 @@ class Cursor {
 		this.do_left_keydown(key);
 	}
 	
+	state_not_ready () {
+		this.selected = undefined;
+		this.state = CursorState.not_ready;
+	}
+	
 	state_ready () {
 		this.selected = undefined;
 		this.state = CursorState.ready;
@@ -533,27 +633,36 @@ class Cursor {
 		this.state = CursorState.disparity;
 	}
 	
-	action_place (x, y, disparity, diameter) {
-		var parent = "none";
-		if (this.selected !== undefined) {
-			parent = this.selected.id;
+	action_place (x, y, disparity, diameter, previous_id, push) {
+		if (push == undefined) {push=true;}
+		
+		// If previous_id is defined, find the node with that id
+		var previous = undefined
+		if (previous_id >= 0) {
+			previous = this.get_feature_by_ID(previous_id)
+			console.assert(previous !== undefined, "Failed to find previous node");
 		}
+		
 		this.add_to_action_list("Feature("+this.feature_counter +","+
-			this.x+","+
-			this.y+","+
-			this.average_disparity+","+
-			this.diameter+","+
-			parent+")");
+			x+","+
+			y+","+
+			disparity+","+
+			diameter+","+
+			previous_id+")");
 		
 			
-		var f = new Feature(this.feature_counter, this.x, this.y, this.average_disparity, this.diameter,this.selected);
+		var f = new Feature(this.feature_counter, x, y, disparity, diameter, previous);
+		if (push) {
+			push_action(this.dataset.name,{"action": "place", "id": f.id, "x": x, "y":y, "disparity": disparity, "diameter": diameter, "previous_id": previous_id});
+		}
 		this.selected = f;
 		this.features.push(f);
 		this.feature_counter += 1;
 		this.calc_average_disparity();
 	}
 	
-	action_move (node, x, y, diameter) {
+	action_move (node, x, y, diameter,push) {
+		if (push == undefined) {push=true;}
 		this.add_to_action_list("Move("+node.id +","+
 			x+","+
 			y+","+
@@ -561,27 +670,68 @@ class Cursor {
 		node.x = x;
 		node.y = y;
 		node.diameter = diameter;
+		if (push) {
+			push_action(this.dataset.name,{"action": "move", "id": node.id, "x": x, "y":y, "diameter": diameter});
+		}
 	}
 	
-	action_disparity (node, disparity) {
+	action_disparity (node, disparity,push) {
+		if (push == undefined) {push=true;}
 		this.add_to_action_list("Disparity("+node.id +","+disparity+")");
+		if (push) {
+			push_action(this.dataset.name,{"action": "disparity", "id": node.id, "disparity": disparity});
+		}
 		node.disparity = disparity;
 	}
 	
-	action_delete () {
+	action_delete (node,push) {
+		if (push == undefined) {push=true;}
+		// Unset any features which refer to this node as there previous
+		var self = this;
+		this.features.forEach(function (feature){
+			if (feature.previous == node) {
+				self.action_unset_previous(feature);
+			}
+		});
 		
+		this.add_to_action_list("Delete("+node.id +")");
+		if (push) {
+			push_action(this.dataset.name,{"action": "delete", "id": node.id});
+		}
+		
+		var index = this.features.indexOf(node);
+		if (index > -1) {
+			this.features.splice(index, 1);
+		} else {
+			console.log("unable to find node to delete");
+		}
+		if (node.previous !== undefined) {
+			this.state_selected(node.previous);
+		} else {
+			this.state_ready();
+		}
 	}
 	
-	action_set_parent (child,parent) {
-		this.add_to_action_list("set_parent("+child.id+","+parent.id+")");
-		child.previous = parent;
+	action_set_previous (child,previous,push) {
+		if (push == undefined) {push=true;}
+		this.add_to_action_list("set_previous("+child.id+","+previous.id+")");
+		if (push) {
+			push_action(this.dataset.name,{"action": "set_previous", "id": child.id, "previous_id": previous.id});
+		}
+		child.previous = previous;
 	}
 	
-	action_unset_parent (child) {
-		
+	action_unset_previous (child,push) {
+		if (push == undefined) {push=true;}
+		this.add_to_action_list("unset_previous("+child.id+")");
+		if (push) {
+			push_action(this.dataset.name,{"action": "unset_previous", "id": child.id});
+		}
+		child.previous = undefined;
 	}
 	
 	add_to_action_list (text) {
+		return;
 		var action_list = document.getElementById("actions");
 		var li = document.createElement('li');
 		li.appendChild(document.createTextNode(text));
@@ -618,6 +768,13 @@ class Cursor {
 		}
 		this.average_disparity = Math.floor(average_disparity);
 		this.update_debug();
+	}
+	
+	get_feature_by_ID(id) {
+		var feature = undefined;
+		this.features.forEach(function(f){if (f.id==id) {feature=f}});
+		console.assert(feature !== undefined, "Failed to find node", id);
+		return feature;
 	}
 }
 

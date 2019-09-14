@@ -1,5 +1,7 @@
-<html>
+<!DOCTYPE html>
+<html lang="en"> 
 	<head>
+		<meta charset="utf-8"/>
 		<link rel="stylesheet" type="text/css" href="annotate.css">
 		<script src="utils.js"></script>
 		<script src="annotate.js"></script>
@@ -15,7 +17,15 @@
 			<canvas id="right_canvas" tabindex='1'></canvas>
 		</div>
 		<div class="right_pane">
+			<div>
+				Sync status: <span id="status" class="good">Good</span>
+			</div>
+			
 			<span id="cursor_state">Cursor State: unkown</span>
+			<hr/>
+			<nav id="dataset_selector">
+			</nav>
+			
 			<h4>Actions</h4>
 			<ul id=actions></ul>
 		</div>
@@ -31,7 +41,7 @@
 			(ctx) => cursor.do_left_draw(ctx),
 			(key) => cursor.do_left_keydown(key));
 		left.draw();
-		left.set_image("test_images/left.png");
+		//left.set_image("test_images/left.png");
 		
 		var right = new ImageViewer("right_canvas",
 			(x,y) => cursor.do_right_primary(x,y),
@@ -41,7 +51,7 @@
 			(ctx) => cursor.do_right_draw(ctx),
 			(key) => cursor.do_right_keydown(key));
 		right.draw();
-		right.set_image("test_images/right.png");
+		//right.set_image("test_images/right.png");
 		
 		right.otherImageViewer = left;
 		left.otherImageViewer = right;
@@ -50,6 +60,9 @@
 			left.draw();
 			right.draw();
 		}
+		get_datasets( function (ds) {
+			ds.map((d) => add_dataset_to_select(d, cursor, left, right));
+		});
 	</script>
 </body>
 </html>

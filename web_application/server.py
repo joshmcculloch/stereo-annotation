@@ -9,6 +9,7 @@ import json
 class AnnotationHandler(http.server.SimpleHTTPRequestHandler):
 	
 	def do_GET(self):
+		self.datadir = "./datasets/"
 		url = urlparse(self.path)
 		path = url[2][1:].split("/")
 		path = [p for p in path if p != '']
@@ -21,7 +22,7 @@ class AnnotationHandler(http.server.SimpleHTTPRequestHandler):
 		if len(path) == 1:
 			self.get_datasets()
 		elif len(path) == 3:
-			if path[1] in self.datasets():
+			if path[1] in [d["name"] for d in self.datasets()]:
 				if path[2] == "history":
 					self.get_history(path[1])
 				elif path[2] == "action":
@@ -46,15 +47,18 @@ class AnnotationHandler(http.server.SimpleHTTPRequestHandler):
 		self.wfile.write("history".encode("ascii"))
 		
 	def get_perform_action(self,dataset):
+		url = urlparse(self.path)
+		qs = parse_qs(url[4])
+		print(qs)
+		self.save_action(dataset, qs)
 		self.send_response(HTTPStatus.OK)
 		self.send_header("Content-type", "application/json")
 		self.end_headers()
-		self.wfile.write("action".encode("ascii"))
+		self.wfile.write("{\"state\": \"success\"}".encode("ascii"))
 		
 	def datasets(self):
-		datadir = "./datasets/"
-		contents = listdir(datadir)
-		datasets = [self.data_set_info(datadir+c) for c in contents if self.isdataset(datadir+c)]
+		contents = listdir(self.datadir)
+		datasets = [self.data_set_info(self.datadir+c) for c in contents if self.isdataset(self.datadir+c)]
 		datasets.sort(key=lambda i:i['name'])
 		return datasets
 		
@@ -64,6 +68,10 @@ class AnnotationHandler(http.server.SimpleHTTPRequestHandler):
 		else:
 			files = listdir(path)
 			if "left.png" in files and "right.png" in files:
+				# create actions file
+				if not isfile(path+"/actions.json"):
+					with open(path+"/actions.json", "w") as action_file:
+						print("Creating action file for dataset: "+path+"/actions.json")
 				return True
 			else:
 				return False
@@ -71,12 +79,32 @@ class AnnotationHandler(http.server.SimpleHTTPRequestHandler):
 	def data_set_info(self, path):
 		return {
 			"annotations": 0,
+			"actions": path[1:]+"/actions.json",
 			"name": path.split("/")[-1],
 			"checkout": False,
 			"left": path[1:]+"/left.png",
 			"right": path[1:]+"/right.png"
 		}
-				
+	
+	def save_action(self, dataset, params):
+		if isdir(self.datadir+dataset):
+			actions = []
+			print("isfile", self.datadir+dataset+"/actions.json", isfile(self.datadir+dataset+"/actions.json"))
+			if isfile(self.datadir+dataset+"/actions.json"):
+				with open(self.datadir+dataset+"/actions.json", "r") as action_file:
+					actions = json.load(action_file)
+			
+			action = {}
+			for p in params:
+				action[p] = params[p][0]
+			actions.append(action)
+			
+			with open(self.datadir+dataset+"/actions.json", "w") as action_file:
+				json.dump(actions, action_file, indent=1)
+
+		else:
+			self.error("no matching dataset")
+	
 	def error(self, msg):
 		self.send_response(HTTPStatus.BAD_REQUEST)
 		self.end_headers()
